@@ -15,7 +15,7 @@ if (!defined('DOKU_PLUGIN')) define('DOKU_PLUGIN',DOKU_INC.'lib/plugins/');
 
 require_once DOKU_PLUGIN.'syntax.php';
 
-class syntax_plugin_publistx extends DokuWiki_Syntax_Plugin {
+class syntax_plugin_publistz extends DokuWiki_Syntax_Plugin {
     function getType() {
         return 'substition';
     }
@@ -29,7 +29,7 @@ class syntax_plugin_publistx extends DokuWiki_Syntax_Plugin {
     }
 
     function connectTo($mode) {
-        $this->Lexer->addSpecialPattern('\[publist\|.+?\]',$mode,'plugin_publistx');
+        $this->Lexer->addSpecialPattern('\[publistz\|.+?\]',$mode,'plugin_publistz');
     }
 
     function handle($match, $state, $pos, &$handler){
@@ -37,7 +37,7 @@ class syntax_plugin_publistx extends DokuWiki_Syntax_Plugin {
 
         // Partition properly
         $matches = array();
-        $pattern = '/\[publist(?:\|(page|file|url):(.+?))(?:\|(wiki|html):(page|file|url):(.+?))(?:\|(.+?(?:\|.+?)*))?\]/';
+        $pattern = '/\[publistz(?:\|(page|file|url):(.+?))(?:\|(wiki|html):(page|file|url):(.+?))(?:\|(.+?(?:\|.+?)*))?\]/';
         if ( 0 === preg_match($pattern, $match, $matches) ) {
             $data['error'] = 'Not valid publist syntax: '.$match;
         }
@@ -116,7 +116,7 @@ class syntax_plugin_publistx extends DokuWiki_Syntax_Plugin {
 
 
             if ( !empty($bibtex) && !empty($template) ) {
-                require_once(dirname(__FILE__).'/bib2tpl/bibtex_converter.php');
+                require_once(dirname(__FILE__).'/bib2tpl/src/bibtex_converter.php');
                 if ( is_readable(dirname(__FILE__).'/sanitiser.php')) {
                     include(dirname(__FILE__).'/sanitiser.php');
                 }

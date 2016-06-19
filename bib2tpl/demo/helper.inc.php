@@ -28,8 +28,11 @@
 /**
  * Provides helping functions in order to keep clutter from the main file.
  *
- * @author Raphael Reitzig
+ * @author Raphael Reitzig <code@verrech.net>
  * @version 2.0
+ * @package bib2tpl
+ * @license http://www.gnu.org/licenses/gpl.html GPLv3
+ * @copyright © 2012, Raphael Reitzig
  */
 class Helper
 {
@@ -37,6 +40,7 @@ class Helper
   /**
    * Copy of main class's options
    * @var array
+   * @access private
    */
   private $options;
 
@@ -65,16 +69,17 @@ class Helper
     $result = '00';
     $month = strtolower($month);
 
+    // This is gonna get ugly; other solutions?
+    $pattern = '/^'.$month.'/';
     if ( preg_match('/^\d[\d]$/', $month) )
     {
       return strlen($month) == 1 ? '0'.$month : $month;
     }
     else
     {
-      foreach ( $this->options['lang']['months'] as $number => $pattern )
+      foreach ( $this->options['lang']['months'] as $number => $name )
       {
-	$pattern = '/'.$pattern.'/';
-        if ( preg_match($pattern , $month) )
+        if ( preg_match($pattern , $name) )
         {
           $result = $number;
           break;

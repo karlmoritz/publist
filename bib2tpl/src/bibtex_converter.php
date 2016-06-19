@@ -28,18 +28,22 @@
 require_once('lib/PEAR5.php');
 require_once('lib/PEAR.php');
 require_once('lib/BibTex.php');
+require_once('lib/underscore.php');
 
 // Some stupid functions
 require_once('helper.inc.php');
 
 /**
- * This class provides a method that parses bibtex files to
- * other text formats based on a template language. See
- *   http://lmazy.verrech.net/bib2tpl/
+ * This class provides methods to parse bibtex files and convert them to
+ * other text-based formats using a template language. See
+ *   {@link http://lmazy.verrech.net/bib2tpl/ lmazy.verrech.net/bib2tpl}
  * for documentation.
  *
- * @author Raphael Reitzig
+ * @author Raphael Reitzig <code@verrech.net>
  * @version 2.0
+ * @package bib2tpl
+ * @license http://www.gnu.org/licenses/gpl.html GPLv3
+ * @copyright © 2012, Raphael Reitzig
  */
 class BibtexConverter {
   /**
@@ -73,17 +77,17 @@ class BibtexConverter {
 
   /**
    * Helper object with support functions.
-   * @access private
+   * @access public
    * @var Helper
    */
-  private $helper;
+  public $helper;
 
   /**
    * Array with author names and replacement.
    * @access private
    * @var assoc. array
    */
-  private $authorlist;
+  private $authorlist;	
 
   /**
    * Constructor.
@@ -95,7 +99,7 @@ class BibtexConverter {
    *                       - order_groups => (asc|desc)
    *                       - sort_by => (DATE|$field)
    *                       - order => (asc|desc)
-   *                       - lang  => any string as long as proper lang/$s.php exists
+   *                       - lang  => any string $s as long as proper lang/$s.php exists
    *                       For details see documentation.
    * @param callback $sanitise Callback to a function that takes a string (taken from a
    *                           BibTeX field) and clears it up for output. Default is the
@@ -105,7 +109,7 @@ class BibtexConverter {
     // Default options
     $this->options = array(
       'only'  => array(),
-      'group' => 'year',
+      'group' => array('year', 'publisher'),
       'order_groups' => 'desc',
       'sort_by' => 'DATE',
       'order' => 'desc',
@@ -120,12 +124,22 @@ class BibtexConverter {
       $this->sanitise = create_function('$i', 'return $i;');
     }
 
+    // error_log(json_encode($options));
+
     // Overwrite default options
     foreach ( $this->options as $key => $value ) {
       if ( !empty($options[$key]) ) {
-        $this->options[$key] = $options[$key];
+          // TODO add special case for multiple grouping fields
+          if ($key == 'group') {
+              $groupArray = explode(",", $options[$key]);
+              $this->options['group'] = $groupArray;
+          } else {
+              $this->options[$key] = $options[$key];
+          }
       }
     }
+
+    // error_log(json_encode($this->options));
 
     /* Load translations.
      * We assume that the english language file is always there.
@@ -139,7 +153,6 @@ class BibtexConverter {
     $this->options['lang'] = $translations;
 
     $this->helper = new Helper($this->options);
-
 
     $this->authorlist = array();
     foreach(preg_split("/((\r?\n)|(\r\n?))/", $authors) as $line){
@@ -287,37 +300,31 @@ class BibtexConverter {
    * @return array An array of arrays of entries
    */
   private function group(&$data) {
-    $result = array();
 
-    if ( $this->options['group'] !== 'none' ) {
-      foreach ( $data as $entry ) {
-        if ( !empty($entry[$this->options['group']]) || $this->options['group'] === 'firstauthor' ) {
-          if ( $this->options['group'] === 'firstauthor' ) {
-            $target = $entry['author'][0]['nice'];
+      __::mixin(array(
+          'groupByMulti' => function($obj, $values, $context) {
+              if (empty($values)) {
+                  return $obj;
+              }
+              $byFirst = __::groupBy($obj, $values[0], $context);
+              $rest = array_slice($values, 1);
+              foreach ($byFirst as $prop => $propVal) {
+                  if ($prop == "") {
+                      $byFirst["Others"] = $propVal;
+                      unset($byFirst[$prop]);
+                      $prop = "Others";
+                  }
+                  if ( empty($byFirst[$prop]) ){
+                      $byFirst[$prop] = array();
+                  }
+                  $byFirst[$prop] = __::groupByMulti($byFirst[$prop], $rest, $context);
+              }
+              return $byFirst;
           }
-          elseif ( $this->options['group'] === 'author' ) {
-            $target = $entry['niceauthor'];
-          }
-          else {
-            $target =  $entry[$this->options['group']];
-          }
-        }
-        else {
-          $target = $this->options['lang']['rest'];
-        }
+      ));
 
-        if ( empty($result[$target]) ) {
-          $result[$target] = array();
-        }
-
-        $result[$target][] = $entry;
-      }
-    }
-    else {
-      $result[$this->options['lang']['all']] = $data;
-    }
-
-    return $result;
+      $result = __::groupByMulti($data, $this->options['group'], array());
+      return $result;
   }
 
   /**
@@ -330,16 +337,51 @@ class BibtexConverter {
    */
   private function sort($data) {
     // Sort groups if there are any
-    if ( $this->options['group'] !== 'none' ) {
+
+      __::mixin(array(
+          'sortGroupsAndEntries' => function($groupArray, $thiz) {
+              $arrayKeys = array_keys($groupArray[0]);
+              if ($arrayKeys[0] == "bibtex") {
+                  usort($groupArray, array($thiz->helper, 'entry_cmp'));
+                  return $groupArray;
+              } else {
+                  ksort($groupArray);                  
+                  foreach ($groupArray as $key => $subGroupArray) {
+                     $groupArray[$key] =  __::sortGroupsAndEntries($subGroupArray, $thiz);
+                  }
+                  
+                  if (!empty($groupArray["Others"])) {
+                      $tmp = $groupArray["Others"];
+                      unset($groupArray["Others"]);
+                      $groupArray["Others"] = $tmp;
+                  }
+
+                  return $groupArray;
+              }
+          }
+      ));
+      
       uksort($data, array($this->helper, 'group_cmp'));
-    }
+      foreach ($data as $key => $group) {
+         $data[$key] =  __::sortGroupsAndEntries($group, $this);
+      }
 
-    // Sort individual groups
-    foreach ( $data as &$group ) {
+      return $data;
+      
+      /*   
+      // NOTE: THIS FUNCTION IS OK, as it sorts the years/other headers
+      if ( $this->options['group'] !== 'none' ) {
+      uksort($data, array($this->helper, 'group_cmp'));
+      }
+
+      // Sort individual groups
+      // TODO: recursively sort the keys of each subgroup, then the entries
+      // of each base array
+      foreach ( $data as &$group ) {
       uasort($group, array($this->helper, 'entry_cmp'));
-    }
-
-    return $data;
+      }
+      return $data;
+    */
   }
 
   /**
@@ -351,43 +393,103 @@ class BibtexConverter {
    * @param string template The used template
    * @return string The data represented in terms of the template
    */
-  private function translate(&$data, &$template) {
-    $result = $template;
+  private function translate(&$data, &$template) {      
+      
+      __::mixin(array(
+          'translateMulti' => function($groupArray, $groupKey, $id, $group_tpl, $converter) {
+              $arrayKeys = array_keys($groupArray[0]);
+              if ($arrayKeys[0] == "bibtex") {
+                  return $converter->translate_group($groupKey
+                                                     , $id
+                                                     , $groupArray
+                                                     , $group_tpl);
+              } else {
+                  $result = '';
+                  foreach ($groupArray as $subGroupKey => $subGroupArray) {
+                      
+                      $result .= "<html><h4>$subGroupKey</h4></html>".
+                              __::translateMulti($subGroupArray
+                                                 , $subGroupKey
+                                                 , $id++
+                                                 , $group_tpl
+                                                 , $converter);
+                  }
+                  return $result;
+              }
+          }
+      ));      
 
-    // Replace global values
-    $result = preg_replace(array('/@globalcount@/', '/@globalgroupcount@/'),
-                           array(Helper::lcount($data, 2), count($data)),
-                           $result);
+      $result = $template;
 
-    if ( $this->options['group'] !== 'none' ) {
-      $pattern = '/@\{group@(.*?)@\}group@/s';
+      // Replace global values
+      $result = preg_replace(array('/@globalcount@/', '/@globalgroupcount@/'),
+                             array(Helper::lcount($data, 2), count($data)),
+                             $result);
 
-      // Extract group templates
-      $group_tpl = array();
-      preg_match($pattern, $result, $group_tpl);
+      if ( $this->options['group'] !== 'none' ) {
+          $pattern = '/@\{group@(.*?)@\}group@/s';
 
-      // For all occurrences of an group template
-      while ( !empty($group_tpl) ) {
-        // Translate all groups
-        $groups = '';
-        $id = 0;
-        foreach ( $data as $groupkey => $group ) {
-          $groups .= $this->translate_group($groupkey, $id++, $group, $group_tpl[1]);
-        }
+          // Extract group templates
+          $group_tpl = array();
+          preg_match($pattern, $result, $group_tpl);
+          // For all occurrences of an group template
+          while ( !empty($group_tpl) ) {
 
-        $result = preg_replace($pattern, $groups, $result, 1);
-        preg_match($pattern, $result, $group_tpl);
+              // Translate all groups
+              $groups = ''; //json_encode($data);
+              $id = 0;
+              
+              foreach ($data as $groupkey => $group) {
+                  $groups .= 
+                          "<html><h3>$groupkey</h3></html>" . 
+                          __::translateMulti($group, $groupkey, $id, $group_tpl[1], $this);
+              }
+
+              $result = preg_replace($pattern, $groups, $result, 1);
+              preg_match($pattern, $result, $group_tpl);
+          }
+          return $result;
       }
 
-      return $result;
-    }
-    else {
-      $groups = '';
-      foreach ( $data as $groupkey => $group ) { // loop will only be run once
-        $groups .= $this->translate_group($groupkey, 0, $group, $template);
+      /*
+      $result = $template;
+
+      // Replace global values
+      $result = preg_replace(array('/@globalcount@/', '/@globalgroupcount@/'),
+                             array(Helper::lcount($data, 2), count($data)),
+                             $result);
+
+      if ( $this->options['group'] !== 'none' ) {
+          $pattern = '/@\{group@(.*?)@\}group@/s';
+
+          // Extract group templates
+          $group_tpl = array();
+          preg_match($pattern, $result, $group_tpl);
+
+          // For all occurrences of an group template
+          while ( !empty($group_tpl) ) {
+              // Translate all groups
+              //        $groups = '';
+              $groups = json_encode($data);
+              $id = 0;
+              foreach ( $data as $groupkey => $group ) {
+                  $groups .= $this->translate_group($groupkey, $id++, $group, $group_tpl[1]);
+              }
+
+              $result = preg_replace($pattern, $groups, $result, 1);
+              preg_match($pattern, $result, $group_tpl);
+          }
+
+          return $result;
       }
-      return $groups;
-    }
+      else {
+          $groups = '';
+          foreach ( $data as $groupkey => $group ) { // loop will only be run once
+              $groups .= $this->translate_group($groupkey, 0, $group, $template);
+          }
+          return $groups;
+      }
+      */
   }
 
   /**
@@ -400,13 +502,14 @@ class BibtexConverter {
    * @param string template The group part of the template
    * @return string String representing the passed group wrt template
    */
-  private function translate_group($key, $id, &$data, $template) {
+  public function translate_group($key, $id, &$data, $template) {
     $result = $template;
 
     // Replace group values
     if ( $this->options['group'] === 'entrytype' ) {
       $key = $this->options['lang']['entrytypes'][$key];
     }
+
     $result = preg_replace(array('/@groupkey@/', '/@groupid@/', '/@groupcount@/'),
                            array($key, $id, count($data)),
                            $result);
@@ -450,17 +553,20 @@ class BibtexConverter {
     $patterns = array();
     $replacements = array();
 
+    //    return json_encode($entry);
+
     foreach ( $entry as $key => $value ) {
       if ( $key === 'author' ) {
         $value = $entry['niceauthor'];
         $value = $this->authorlink($value);
       }
-      if ( $key == 'bibtex') {
-        $patterns []= '/@'.$key.'@/';
+
+      $patterns []= '/@'.$key.'@/';
+
+      if ( $key === 'bibtex' ) {
         $replacements []= $value;
       }
       else {
-        $patterns []= '/@'.$key.'@/';
         $replacements []= call_user_func($this->sanitise, $value);
       }
     }
@@ -543,7 +649,7 @@ class BibtexConverter {
 
     return $string;
   }
-
+ 
   /**
    * This function adds links to co-author websites where available.
    *
@@ -554,7 +660,8 @@ class BibtexConverter {
   private function authorlink($data) {
     $data = str_replace(array_keys($this->authorlist),$this->authorlist,$data);
     return $data;
-  }
+  }  
 }
 
 ?>
+
